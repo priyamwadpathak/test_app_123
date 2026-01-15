@@ -9,12 +9,27 @@ export class GeminiService {
     this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
+  /**
+   * Cleans the AI response string by removing potential markdown blocks (e.g. ```json ... ```)
+   */
+  private cleanJsonResponse(text: string): string {
+    const jsonBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/i;
+    const match = text.match(jsonBlockRegex);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+    return text.trim();
+  }
+
   async fetchMarketData(index: MarketIndex): Promise<MarketDataResponse> {
     const prompt = `
-      Fetch the latest live market price, 1-day change, and near-the-money weekly expiry option chain for ${index}.
-      Also, provide a simulated 10-point price history for the last 1 hour at 5-minute intervals based on the current trend.
-      Return the data strictly in JSON format.
-      The option chain should include at least 5 strikes around the current spot price for both CE and PE.
+      Act as a high-speed financial data terminal. Use Google Search to find:
+      1. Current live spot price of ${index}.
+      2. Today's percentage change and point change.
+      3. The current weekly option chain near-the-money (3 strikes above, 3 strikes below spot).
+      4. Generate a 10-point price history for the last 60 minutes based on today's actual price movement trends.
+
+      Return the result as a raw JSON object matching this schema exactly. Do not include extra text.
     `;
 
     try {
@@ -51,7 +66,7 @@ export class GeminiService {
                   properties: {
                     strike: { type: Type.NUMBER },
                     expiry: { type: Type.STRING },
-                    type: { type: Type.STRING },
+                    type: { type: Type.STRING, enum: ['CE', 'PE'] },
                     ltp: { type: Type.NUMBER },
                     change: { type: Type.NUMBER },
                     oi: { type: Type.NUMBER },
@@ -66,16 +81,17 @@ export class GeminiService {
         }
       });
 
-      const data = JSON.parse(response.text || '{}');
+      const rawText = response.text || '';
+      const cleanedJson = this.cleanJsonResponse(rawText);
+      const data = JSON.parse(cleanedJson || '{}');
       
-      // Extract grounding sources as required by instructions
       const sources: GroundingSource[] = [];
       const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
       if (chunks) {
         chunks.forEach((chunk: any) => {
           if (chunk.web) {
             sources.push({
-              title: chunk.web.title || 'Market Source',
+              title: chunk.web.title || 'Market Feed',
               uri: chunk.web.uri
             });
           }
@@ -97,19 +113,15 @@ export class GeminiService {
     optionChain: OptionData[]
   ): Promise<TradeSignal> {
     const prompt = `
-      Act as a senior Quantitative Options Trader. Analyze the following data for ${index}:
-      - Current Price: ${price}
-      - RSI (14): ${rsi}
-      - Recent Price Action (Last 5 candles): ${JSON.stringify(recentData.slice(-5))}
-      - Near-the-money Option Chain snippet: ${JSON.stringify(optionChain.slice(0, 6))}
+      Strategy Analysis: Price Action + RSI.
+      Index: ${index}
+      Price: ${price}
+      RSI: ${rsi}
+      History: ${JSON.stringify(recentData.slice(-10))}
+      Options: ${JSON.stringify(optionChain)}
 
-      Task:
-      1. Identify the immediate trade direction based on Price Action (support/resistance, trend) and RSI momentum.
-      2. Suggest a specific Strike Price and Option Type (CE or PE).
-      3. Define clear Entry, Target, and Stop Loss.
-      4. Provide a 1-sentence professional rationale.
-
-      Output strictly in JSON format.
+      Task: Determine trade direction, target, and stop loss. Recommend the best option strike from the provided chain.
+      Output: JSON only.
     `;
 
     try {
@@ -135,7 +147,8 @@ export class GeminiService {
         }
       });
 
-      return JSON.parse(response.text || '{}');
+      const cleanedJson = this.cleanJsonResponse(response.text || '{}');
+      return JSON.parse(cleanedJson);
     } catch (error) {
       console.error("Gemini Analysis Error:", error);
       throw error;
