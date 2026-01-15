@@ -1,0 +1,5 @@
+{
+  "name": "OptiQuant Pro",
+  "description": "A sophisticated options trading analysis terminal for Nifty 50 and Sensex, featuring real-time RSI, Price Action indicators, and AI-powered trade signaling using Gemini.",
+  "requestFramePermissions": []
+}
