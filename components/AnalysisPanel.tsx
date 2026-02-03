@@ -57,18 +57,27 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ signal, loading, onRefres
             <p className="text-2xl font-black italic tracking-tight text-white">{signal.recommendedOption}</p>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            <div className="bg-[#1a1c21] p-3 rounded-lg border border-[#2d2f36]">
-              <p className="text-[10px] text-gray-500 uppercase mb-1">Entry</p>
-              <p className="text-lg font-bold mono text-blue-400">{signal.entry.toFixed(1)}</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="bg-[#1a1c21] p-3 rounded-lg border border-[#2d2f36] flex flex-col">
+              <p className="text-[10px] text-gray-500 uppercase mb-1 font-bold">Entry</p>
+              <div className="flex flex-col">
+                <p className="text-sm font-bold mono text-white">{signal.entry.toFixed(1)} <span className="text-[10px] text-gray-600 font-normal">Idx</span></p>
+                <p className="text-lg font-black mono text-blue-400">₹{signal.optionEntry.toFixed(2)}</p>
+              </div>
             </div>
-            <div className="bg-[#1a1c21] p-3 rounded-lg border border-[#2d2f36]">
-              <p className="text-[10px] text-gray-500 uppercase mb-1">Target</p>
-              <p className="text-lg font-bold mono text-green-400">{signal.target.toFixed(1)}</p>
+            <div className="bg-[#1a1c21] p-3 rounded-lg border border-[#2d2f36] flex flex-col">
+              <p className="text-[10px] text-gray-500 uppercase mb-1 font-bold">Target</p>
+              <div className="flex flex-col">
+                <p className="text-sm font-bold mono text-white">{signal.target.toFixed(1)} <span className="text-[10px] text-gray-600 font-normal">Idx</span></p>
+                <p className="text-lg font-black mono text-green-400">₹{signal.optionTarget.toFixed(2)}</p>
+              </div>
             </div>
-            <div className="bg-[#1a1c21] p-3 rounded-lg border border-[#2d2f36]">
-              <p className="text-[10px] text-gray-500 uppercase mb-1">Stop Loss</p>
-              <p className="text-lg font-bold mono text-red-400">{signal.stopLoss.toFixed(1)}</p>
+            <div className="bg-[#1a1c21] p-3 rounded-lg border border-[#2d2f36] flex flex-col">
+              <p className="text-[10px] text-gray-500 uppercase mb-1 font-bold">Stop Loss</p>
+              <div className="flex flex-col">
+                <p className="text-sm font-bold mono text-white">{signal.stopLoss.toFixed(1)} <span className="text-[10px] text-gray-600 font-normal">Idx</span></p>
+                <p className="text-lg font-black mono text-red-400">₹{signal.optionStopLoss.toFixed(2)}</p>
+              </div>
             </div>
           </div>
 
@@ -84,7 +93,6 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ signal, loading, onRefres
               ))}
               <span className="text-[10px] text-gray-500 ml-2">CONFIDENCE</span>
             </div>
-            {/* Updated version string to reflect the Gemini 3 Pro model upgrade */}
             <span className="text-[10px] text-gray-600">v3.0-PRO</span>
           </div>
         </div>

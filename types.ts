@@ -32,9 +32,12 @@ export interface OptionData {
 export interface TradeSignal {
   symbol: string;
   direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-  entry: number;
-  target: number;
-  stopLoss: number;
+  entry: number; // Index price
+  target: number; // Index price
+  stopLoss: number; // Index price
+  optionEntry: number; // Corresponding option premium
+  optionTarget: number; // Corresponding option premium
+  optionStopLoss: number; // Corresponding option premium
   recommendedOption: string;
   rationale: string;
   confidence: number;

@@ -3,40 +3,39 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { MarketIndex, TradeSignal, Candlestick, OptionData, MarketDataResponse, GroundingSource } from "../types";
 
 export class GeminiService {
-  private ai: GoogleGenAI;
-
-  constructor() {
-    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  private getClient() {
+    return new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
-  /**
-   * Cleans the AI response string by removing potential markdown blocks (e.g. ```json ... ```)
-   */
-  private cleanJsonResponse(text: string): string {
-    const jsonBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/i;
-    const match = text.match(jsonBlockRegex);
-    if (match && match[1]) {
-      return match[1].trim();
-    }
-    return text.trim();
+  private cleanJson(text: string): string {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    return jsonMatch ? jsonMatch[0] : text.trim();
   }
 
   async fetchMarketData(index: MarketIndex): Promise<MarketDataResponse> {
+    const ai = this.getClient();
+    // Using gemini-3-flash-preview for maximum speed.
     const prompt = `
-      Act as a high-speed financial data terminal. Use Google Search to find:
-      1. Current live spot price of ${index}.
-      2. Today's percentage change and point change.
-      3. The current weekly option chain near-the-money (3 strikes above, 3 strikes below spot).
-      4. Generate a 10-point price history for the last 60 minutes based on today's actual price movement trends.
-
-      Return the result as a raw JSON object matching this schema exactly. Do not include extra text.
+      Current Time: ${new Date().toISOString()}
+      Task: Fetch LIVE market data for ${index}. 
+      1. Find current Spot Price and today's percentage change.
+      2. Find the Option Chain for the NEAREST Weekly Expiry (e.g., this Thursday for Nifty).
+      3. Return 10 strikes: 5 ITM, 5 OTM. 
+      4. For each: Strike, Type (CE/PE), LTP (Last Traded Price), IV, and Volume.
+      5. Historical Data: Provide a 10-point 15-min interval price history for the current session.
+      
+      Requirements: 
+      - Use Google Search for ground truth.
+      - Return ONLY strictly valid JSON. 
+      - Ensure LTP is accurate as of the last few minutes.
     `;
 
     try {
-      const response = await this.ai.models.generateContent({
-        model: "gemini-3-pro-preview",
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
         contents: prompt,
         config: {
+          systemInstruction: "You are a low-latency financial data bridge. Your objective is speed and accuracy. Use search to verify live prices. Output JSON.",
           tools: [{ googleSearch: {} }],
           responseMimeType: "application/json",
           responseSchema: {
@@ -66,7 +65,7 @@ export class GeminiService {
                   properties: {
                     strike: { type: Type.NUMBER },
                     expiry: { type: Type.STRING },
-                    type: { type: Type.STRING, enum: ['CE', 'PE'] },
+                    type: { type: Type.STRING },
                     ltp: { type: Type.NUMBER },
                     change: { type: Type.NUMBER },
                     oi: { type: Type.NUMBER },
@@ -81,9 +80,8 @@ export class GeminiService {
         }
       });
 
-      const rawText = response.text || '';
-      const cleanedJson = this.cleanJsonResponse(rawText);
-      const data = JSON.parse(cleanedJson || '{}');
+      const cleanedText = this.cleanJson(response.text || '{}');
+      const data = JSON.parse(cleanedText);
       
       const sources: GroundingSource[] = [];
       const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
@@ -91,7 +89,7 @@ export class GeminiService {
         chunks.forEach((chunk: any) => {
           if (chunk.web) {
             sources.push({
-              title: chunk.web.title || 'Market Feed',
+              title: chunk.web.title || 'Market Source',
               uri: chunk.web.uri
             });
           }
@@ -100,7 +98,7 @@ export class GeminiService {
 
       return { ...data, sources };
     } catch (error) {
-      console.error("Gemini Fetch Data Error:", error);
+      console.error("Gemini Data Fetch Error:", error);
       throw error;
     }
   }
@@ -112,43 +110,47 @@ export class GeminiService {
     recentData: Candlestick[], 
     optionChain: OptionData[]
   ): Promise<TradeSignal> {
+    const ai = this.getClient();
     const prompt = `
-      Strategy Analysis: Price Action + RSI.
-      Index: ${index}
-      Price: ${price}
-      RSI: ${rsi}
-      History: ${JSON.stringify(recentData.slice(-10))}
-      Options: ${JSON.stringify(optionChain)}
-
-      Task: Determine trade direction, target, and stop loss. Recommend the best option strike from the provided chain.
-      Output: JSON only.
+      Index: ${index} @ ${price}
+      RSI: ${rsi.toFixed(2)}
+      Options Snippet: ${JSON.stringify(optionChain.slice(0, 4))}
+      
+      Generate a professional trade signal. 
+      - Bullish/Bearish/Neutral bias.
+      - Best Strike to trade.
+      - Index & Option Entry/Target/SL.
+      - 2-sentence rationale.
     `;
 
     try {
-      const response = await this.ai.models.generateContent({
-        model: "gemini-3-pro-preview",
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview", // Also use flash for analysis to stay quick
         contents: prompt,
         config: {
+          systemInstruction: "You are a professional Derivatives Analyst. Provide precise, high-speed trading signals in JSON format.",
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
             properties: {
               symbol: { type: Type.STRING },
-              direction: { type: Type.STRING, enum: ['BULLISH', 'BEARISH', 'NEUTRAL'] },
+              direction: { type: Type.STRING },
               entry: { type: Type.NUMBER },
               target: { type: Type.NUMBER },
               stopLoss: { type: Type.NUMBER },
+              optionEntry: { type: Type.NUMBER },
+              optionTarget: { type: Type.NUMBER },
+              optionStopLoss: { type: Type.NUMBER },
               recommendedOption: { type: Type.STRING },
               rationale: { type: Type.STRING },
               confidence: { type: Type.NUMBER },
             },
-            required: ['symbol', 'direction', 'entry', 'target', 'stopLoss', 'recommendedOption', 'rationale', 'confidence']
+            required: ['symbol', 'direction', 'entry', 'target', 'stopLoss', 'optionEntry', 'optionTarget', 'optionStopLoss', 'recommendedOption', 'rationale', 'confidence']
           }
         }
       });
 
-      const cleanedJson = this.cleanJsonResponse(response.text || '{}');
-      return JSON.parse(cleanedJson);
+      return JSON.parse(this.cleanJson(response.text || '{}'));
     } catch (error) {
       console.error("Gemini Analysis Error:", error);
       throw error;
