@@ -12,30 +12,38 @@ export class GeminiService {
     return jsonMatch ? jsonMatch[0] : text.trim();
   }
 
-  async fetchMarketData(index: MarketIndex): Promise<MarketDataResponse> {
-    const ai = this.getClient();
-    // Using gemini-3-flash-preview for maximum speed.
-    const prompt = `
-      Current Time: ${new Date().toISOString()}
-      Task: Fetch LIVE market data for ${index}. 
-      1. Find current Spot Price and today's percentage change.
-      2. Find the Option Chain for the NEAREST Weekly Expiry (e.g., this Thursday for Nifty).
-      3. Return 10 strikes: 5 ITM, 5 OTM. 
-      4. For each: Strike, Type (CE/PE), LTP (Last Traded Price), IV, and Volume.
-      5. Historical Data: Provide a 10-point 15-min interval price history for the current session.
-      
-      Requirements: 
-      - Use Google Search for ground truth.
-      - Return ONLY strictly valid JSON. 
-      - Ensure LTP is accurate as of the last few minutes.
-    `;
-
+  private async withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promise<T> {
     try {
+      return await fn();
+    } catch (error: any) {
+      if (retries > 0 && (error?.message?.includes('429') || error?.status === 'RESOURCE_EXHAUSTED')) {
+        console.warn(`Rate limited. Retrying in ${delay}ms... (${retries} retries left)`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.withRetry(fn, retries - 1, delay * 2);
+      }
+      throw error;
+    }
+  }
+
+  async fetchMarketData(index: MarketIndex): Promise<MarketDataResponse> {
+    return this.withRetry(async () => {
+      const ai = this.getClient();
+      const today = new Date().toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+      
+      const prompt = `
+        DATE: ${today} | INDEX: ${index}
+        GET: 
+        1. Current Spot Price & % Change (NSE India).
+        2. Option Chain (Nearest Weekly Expiry): 10 strikes (5 ITM, 5 OTM). Strike, LTP (CE/PE).
+        3. 10-point Intraday price history (15m intervals).
+        JSON ONLY. Accurate LTP.
+      `;
+
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: prompt,
         config: {
-          systemInstruction: "You are a low-latency financial data bridge. Your objective is speed and accuracy. Use search to verify live prices. Output JSON.",
+          systemInstruction: `Institutional data bridge. Accuracy first. Use Google Search for live NSE/BSE prices. Return valid JSON.`,
           tools: [{ googleSearch: {} }],
           responseMimeType: "application/json",
           responseSchema: {
@@ -97,10 +105,7 @@ export class GeminiService {
       }
 
       return { ...data, sources };
-    } catch (error) {
-      console.error("Gemini Data Fetch Error:", error);
-      throw error;
-    }
+    });
   }
 
   async analyzeMarket(
@@ -110,25 +115,19 @@ export class GeminiService {
     recentData: Candlestick[], 
     optionChain: OptionData[]
   ): Promise<TradeSignal> {
-    const ai = this.getClient();
-    const prompt = `
-      Index: ${index} @ ${price}
-      RSI: ${rsi.toFixed(2)}
-      Options Snippet: ${JSON.stringify(optionChain.slice(0, 4))}
-      
-      Generate a professional trade signal. 
-      - Bullish/Bearish/Neutral bias.
-      - Best Strike to trade.
-      - Index & Option Entry/Target/SL.
-      - 2-sentence rationale.
-    `;
+    return this.withRetry(async () => {
+      const ai = this.getClient();
+      const prompt = `
+        Market: ${index} @ ${price} | RSI: ${rsi.toFixed(2)}
+        Chain: ${JSON.stringify(optionChain.map(o => ({ s: o.strike, t: o.type, p: o.ltp })))}
+        Task: High-Conviction Intraday Trend Analysis. Suggest entry ONLY if conviction > 75%.
+      `;
 
-    try {
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview", // Also use flash for analysis to stay quick
+        model: "gemini-3-flash-preview", 
         contents: prompt,
         config: {
-          systemInstruction: "You are a professional Derivatives Analyst. Provide precise, high-speed trading signals in JSON format.",
+          systemInstruction: "Senior Derivatives Strategist. Suggest entries only on clear trend alignment. Output JSON.",
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -151,10 +150,7 @@ export class GeminiService {
       });
 
       return JSON.parse(this.cleanJson(response.text || '{}'));
-    } catch (error) {
-      console.error("Gemini Analysis Error:", error);
-      throw error;
-    }
+    });
   }
 }
 
